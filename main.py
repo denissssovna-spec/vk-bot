@@ -54,7 +54,41 @@ def get_main_keyboard():
 
 @app.route("/", methods=["POST"])
 def callback():
-    data = request.json
+    try:
+    data = request.get_json(force=True)
+    print("EVENT:", data)
+
+    if data.get("type") == "confirmation":
+        return CONFIRMATION_TOKEN
+
+    if data.get("type") == "message_new":
+        message = data["object"]["message"]
+        user_id = message["from_id"]
+        text = (message.get("text") or "").lower().strip()
+
+        if user_id not in users_greeted:
+            send_message(
+                user_id,
+                "Добрый день! 👋\nПросто напишите, что вас интересует, и мы сразу приступим к расчету 😊",
+                keyboard=get_main_keyboard()
+            )
+            users_greeted.add(user_id)
+            return "ok"
+
+        if "цен" in text or "стоим" in text or "сколько" in text:
+            send_message(user_id, "Чтобы расчет был точным 👀", keyboard=get_main_keyboard())
+
+        elif "налич" in text or "есть" in text:
+            send_message(user_id, "Проверяем наличие 📦", keyboard=get_main_keyboard())
+
+        else:
+            send_message(user_id, "Напишите подробнее 👌", keyboard=get_main_keyboard())
+
+    return "ok"
+
+except Exception as e:
+    print("ERROR IN CALLBACK:", e)
+    return "ok"
 
     # Подтверждение сервера
     if data.get("type") == "confirmation":
