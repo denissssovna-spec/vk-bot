@@ -10,8 +10,8 @@ app = Flask(__name__)
 TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-if not TOKEN or not CONFIRMATION_TOKEN:
-    raise ValueError("Не заданы VK_TOKEN или VK_CONFIRMATION_TOKEN в переменных окружения!")
+print("VK_TOKEN:", TOKEN)
+print("CONFIRMATION:", CONFIRMATION_TOKEN)
 
 # Простое хранилище (сбрасывается при перезапуске)
 users_greeted = set()
