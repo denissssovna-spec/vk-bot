@@ -7,14 +7,16 @@ import random
 
 app = Flask(__name__)
 
-# VK токены из Render
 TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-users_greeted = set()
 logging.basicConfig(level=logging.INFO)
 
-# --------- ОТПРАВКА СООБЩЕНИЙ ----------
+users_greeted = set()
+users_stage = {}      # NEW: этап диалога
+users_closed = set()   # NEW: закрытые диалоги
+
+# ---------------- SEND ----------------
 def send_message(user_id, text, keyboard=None):
     data = {
         "user_id": user_id,
@@ -27,16 +29,9 @@ def send_message(user_id, text, keyboard=None):
     if keyboard:
         data["keyboard"] = json.dumps(keyboard)
 
-    try:
-        requests.post(
-            "https://api.vk.com/method/messages.send",
-            data=data,
-            timeout=10
-        )
-    except Exception as e:
-        print("VK ERROR:", e)
+    requests.post("https://api.vk.com/method/messages.send", data=data)
 
-# --------- КЛАВИАТУРА ----------
+# ---------------- KEYBOARD ----------------
 def get_main_keyboard():
     return {
         "one_time": False,
@@ -44,73 +39,86 @@ def get_main_keyboard():
             [
                 {"action": {"type": "text", "label": "💰 Узнать цену"}, "color": "primary"},
                 {"action": {"type": "text", "label": "📦 Наличие"}, "color": "secondary"}
-            ],
-            [
-                {"action": {"type": "text", "label": "📞 Оставить телефон"}, "color": "positive"}
             ]
         ]
     }
 
-# --------- ОБРАБОТКА ВХОДЯЩИХ ----------
+# ---------------- CALLBACK ----------------
 @app.route("/", methods=["POST"])
 def callback():
     try:
         data = request.get_json(force=True)
-        print("EVENT:", data)
 
-        # подтверждение VK
         if data.get("type") == "confirmation":
             return CONFIRMATION_TOKEN
 
-        # новое сообщение
-        if data.get("type") == "message_new":
-            message = data["object"]["message"]
-            user_id = message["from_id"]
-            text = (message.get("text") or "").lower().strip()
+        if data.get("type") != "message_new":
+            return "ok"
 
-            # первое приветствие
-            if user_id not in users_greeted:
-                send_message(
-                    user_id,
-                    "Добрый день! 👋\nВыберите, что вас интересует:",
-                    keyboard=get_main_keyboard()
-                )
-                users_greeted.add(user_id)
-                return "ok"
+        message = data["object"]["message"]
+        user_id = message["from_id"]
+        text = (message.get("text") or "").lower().strip()
 
-            # цена
-            if "цен" in text or "стоим" in text or "сколько" in text:
-                send_message(
-                    user_id,
-                    "Уточните, пожалуйста, на какой товар нужно рассчитать стоимость 👀\n"
-                    "Мы уточним детали и оперативно свяжемся с вами.\n\n"
-                    "Для удобства оставьте, пожалуйста, номер телефона 📞",
-                    keyboard=get_main_keyboard()
-                )
+        # ❌ если диалог закрыт — игнорируем
+        if user_id in users_closed:
+            return "ok"
 
-            # наличие
-            elif "налич" in text or "есть" in text:
-                send_message(
-                    user_id,
-                    "Уточните, пожалуйста, какой товар вас интересует по наличию 👀\n"
-                    "Мы проверим информацию и свяжемся с вами 📦",
-                    keyboard=get_main_keyboard()
-                )
+        # ---------------- ПРИВЕТСТВИЕ ----------------
+        if user_id not in users_greeted:
+            users_greeted.add(user_id)
+            users_stage[user_id] = "start"
 
-            # телефон (кнопка или сообщение)
-            elif "телефон" in text or "номер" in text:
-                send_message(
-                    user_id,
-                    "Отлично 👍\nОтправьте, пожалуйста, ваш номер телефона — мы свяжемся с вами в ближайшее время 📞",
-                    keyboard=get_main_keyboard()
-                )
+            send_message(
+                user_id,
+                "Здравствуйте 👋\nВыберите, что вас интересует:",
+                keyboard=get_main_keyboard()
+            )
+            return "ok"
 
-            else:
-                send_message(
-                    user_id,
-                    "Напишите, что вас интересует — цена, наличие или оставьте телефон 👇",
-                    keyboard=get_main_keyboard()
-                )
+        # ---------------- ЦЕНА ----------------
+        if "цен" in text or "стоим" in text or "сколько" in text:
+            if users_stage.get(user_id) == "price":
+                return "ok"  # ❌ защита от спама
+
+            users_stage[user_id] = "price"
+
+            send_message(
+                user_id,
+                "Уточните, пожалуйста, на какой товар нужна цена 👀\n"
+                "После уточнения мы свяжемся с вами.\n\n"
+                "Оставьте, пожалуйста, номер телефона 📞"
+            )
+            return "ok"
+
+        # ---------------- НАЛИЧИЕ ----------------
+        if "налич" in text or "есть" in text:
+            users_stage[user_id] = "stock"
+
+            send_message(
+                user_id,
+                "Уточните, пожалуйста, какой товар вас интересует 👀\n"
+                "Проверим наличие и свяжемся с вами 📦\n\n"
+                "Оставьте, пожалуйста, номер телефона 📞"
+            )
+            return "ok"
+
+        # ---------------- ТЕЛЕФОН ----------------
+        if any(ch.isdigit() for ch in text) and len(text) >= 10:
+            send_message(
+                user_id,
+                "В ближайшее время свяжемся с вами 😊"
+            )
+
+            users_closed.add(user_id)
+            users_stage[user_id] = "closed"
+            return "ok"
+
+        # ---------------- ПОСЛЕ СЦЕНАРИЯ ----------------
+        send_message(
+            user_id,
+            "Напишите, пожалуйста, что вас интересует 👇",
+            keyboard=get_main_keyboard()
+        )
 
         return "ok"
 
@@ -118,7 +126,6 @@ def callback():
         print("ERROR:", e)
         return "ok"
 
-# --------- ЗАПУСК ----------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
