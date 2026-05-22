@@ -7,14 +7,14 @@ import random
 
 app = Flask(__name__)
 
-# VK данные из Render
+# VK токены из Render
 TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
 users_greeted = set()
-
 logging.basicConfig(level=logging.INFO)
 
+# --------- ОТПРАВКА СООБЩЕНИЙ ----------
 def send_message(user_id, text, keyboard=None):
     data = {
         "user_id": user_id,
@@ -34,8 +34,9 @@ def send_message(user_id, text, keyboard=None):
             timeout=10
         )
     except Exception as e:
-        print("VK SEND ERROR:", e)
+        print("VK ERROR:", e)
 
+# --------- КЛАВИАТУРА ----------
 def get_main_keyboard():
     return {
         "one_time": False,
@@ -43,21 +44,25 @@ def get_main_keyboard():
             [
                 {"action": {"type": "text", "label": "💰 Узнать цену"}, "color": "primary"},
                 {"action": {"type": "text", "label": "📦 Наличие"}, "color": "secondary"}
+            ],
+            [
+                {"action": {"type": "text", "label": "📞 Оставить телефон"}, "color": "positive"}
             ]
         ]
     }
 
+# --------- ОБРАБОТКА ВХОДЯЩИХ ----------
 @app.route("/", methods=["POST"])
 def callback():
     try:
         data = request.get_json(force=True)
         print("EVENT:", data)
 
-        # подтверждение сервера VK
+        # подтверждение VK
         if data.get("type") == "confirmation":
             return CONFIRMATION_TOKEN
 
-        # новые сообщения
+        # новое сообщение
         if data.get("type") == "message_new":
             message = data["object"]["message"]
             user_id = message["from_id"]
@@ -67,21 +72,45 @@ def callback():
             if user_id not in users_greeted:
                 send_message(
                     user_id,
-                    "Добрый день! 👋\nНапишите, что вас интересует 😊",
+                    "Добрый день! 👋\nВыберите, что вас интересует:",
                     keyboard=get_main_keyboard()
                 )
                 users_greeted.add(user_id)
                 return "ok"
 
-            # ключевые слова
+            # цена
             if "цен" in text or "стоим" in text or "сколько" in text:
-                send_message(user_id, "Уточняем цену 👀", keyboard=get_main_keyboard())
+                send_message(
+                    user_id,
+                    "Уточните, пожалуйста, на какой товар нужно рассчитать стоимость 👀\n"
+                    "Мы уточним детали и оперативно свяжемся с вами.\n\n"
+                    "Для удобства оставьте, пожалуйста, номер телефона 📞",
+                    keyboard=get_main_keyboard()
+                )
 
+            # наличие
             elif "налич" in text or "есть" in text:
-                send_message(user_id, "Проверяем наличие 📦", keyboard=get_main_keyboard())
+                send_message(
+                    user_id,
+                    "Уточните, пожалуйста, какой товар вас интересует по наличию 👀\n"
+                    "Мы проверим информацию и свяжемся с вами 📦",
+                    keyboard=get_main_keyboard()
+                )
+
+            # телефон (кнопка или сообщение)
+            elif "телефон" in text or "номер" in text:
+                send_message(
+                    user_id,
+                    "Отлично 👍\nОтправьте, пожалуйста, ваш номер телефона — мы свяжемся с вами в ближайшее время 📞",
+                    keyboard=get_main_keyboard()
+                )
 
             else:
-                send_message(user_id, "Напишите подробнее 👌", keyboard=get_main_keyboard())
+                send_message(
+                    user_id,
+                    "Напишите, что вас интересует — цена, наличие или оставьте телефон 👇",
+                    keyboard=get_main_keyboard()
+                )
 
         return "ok"
 
@@ -89,6 +118,7 @@ def callback():
         print("ERROR:", e)
         return "ok"
 
+# --------- ЗАПУСК ----------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
