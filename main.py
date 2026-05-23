@@ -26,7 +26,9 @@ creds = Credentials.from_service_account_file(
 )
 
 client = gspread.authorize(creds)
-sheet = client.open("Leads Bot").sheet1
+
+# ВСТАВЛЕН ID ТАБЛИЦЫ
+sheet = client.open_by_key("1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM").sheet1
 
 def save_lead(user_id, phone):
     try:
@@ -137,7 +139,6 @@ def callback():
         if state == "waiting_details":
             users_state[user_id] = "waiting_phone"
 
-            # добавляем конкретный товар
             users_interest[user_id] += f": {text}"
 
             send_message(
@@ -152,7 +153,7 @@ def callback():
             save_lead(user_id, text)
 
             send_message(
-                user_id,
+                user,
                 "В ближайшее время свяжемся с вами 😊"
             )
 
@@ -160,7 +161,6 @@ def callback():
             users_closed.add(user_id)
             return "ok"
 
-        # -------- SAFE EXIT --------
         return "ok"
 
     except Exception as e:
@@ -170,4 +170,4 @@ def callback():
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port) 
+    app.run(host="0.0.0.0", port=port)_id
