@@ -10,30 +10,57 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+# -------- ENV --------
 TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-users_state = {}
-users_closed = set()
-users_interest = {}
+# -------- SAFETY CHECKS --------
+if not TOKEN:
+    print("❌ VK_TOKEN is missing")
+
+if not CONFIRMATION_TOKEN:
+    print("❌ VK_CONFIRMATION_TOKEN is missing")
+
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+
+if not GOOGLE_CREDENTIALS:
+    print("❌ GOOGLE_CREDENTIALS is missing")
+    raise Exception("No GOOGLE_CREDENTIALS in environment")
 
 # -------- GOOGLE SHEETS --------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+try:
+    creds_json = json.loads(GOOGLE_CREDENTIALS)
 
-creds = Credentials.from_service_account_info(
-    creds_json,
-    scopes=SCOPES
-)
+    creds = Credentials.from_service_account_info(
+        creds_json,
+        scopes=SCOPES
+    )
 
-client = gspread.authorize(creds)
+    client = gspread.authorize(creds)
 
-sheet = client.open_by_key(
-    "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
-).sheet1
+    sheet = client.open_by_key(
+        "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
+    ).sheet1
 
+    print("✅ Google Sheets connected")
+
+except Exception as e:
+    print("❌ Google Sheets init error:", e)
+    sheet = None
+
+# -------- STATE --------
+users_state = {}
+users_closed = set()
+users_interest = {}
+
+# -------- SAVE LEAD --------
 def save_lead(user_id, phone):
+    if sheet is None:
+        print("❌ Sheet not initialized")
+        return
+
     try:
         interest = users_interest.get(user_id, "")
 
@@ -44,6 +71,7 @@ def save_lead(user_id, phone):
             interest,
             ""
         ])
+
     except Exception as e:
         print("SHEETS ERROR:", e)
 
@@ -81,14 +109,14 @@ def keyboard_main():
         ]
     }
 
-# -------- CALLBACK VK --------
+# -------- WEBHOOK --------
 @app.route("/", methods=["POST"])
 def callback():
     try:
         data = request.get_json(force=True)
 
         if data.get("type") == "confirmation":
-            return CONFIRMATION_TOKEN
+            return CONFIRMATION_TOKEN or "ok"
 
         if data.get("type") != "message_new":
             return "ok"
@@ -114,14 +142,11 @@ def callback():
             return "ok"
 
         # PRICE
-        if "цен" in text or "стоим" in text or "сколько" in text:
+        if "цен" in text or "сколько" in text or "стоим" in text:
             users_state[user_id] = "waiting_details"
             users_interest[user_id] = "Цена"
 
-            send_message(
-                user_id,
-                "Уточните товар 👀\nМы свяжемся с вами 📞"
-            )
+            send_message(user_id, "Уточните товар 👀")
             return "ok"
 
         # STOCK
@@ -129,32 +154,23 @@ def callback():
             users_state[user_id] = "waiting_details"
             users_interest[user_id] = "Наличие"
 
-            send_message(
-                user_id,
-                "Уточните товар 👀\nПроверим и ответим 📦"
-            )
+            send_message(user_id, "Уточните товар 👀")
             return "ok"
 
         # DETAILS
         if state == "waiting_details":
             users_state[user_id] = "waiting_phone"
-
             users_interest[user_id] += f": {text}"
 
-            send_message(
-                user_id,
-                "Оставьте номер телефона 📞"
-            )
-            return "ok"
+            send_message(user_id, "Оставьте номер телефона 📞")
+
+return "ok"
 
         # PHONE
         if any(ch.isdigit() for ch in text) and len(text) >= 10:
             save_lead(user_id, text)
 
-            send_message(
-                user_id,
-                "Спасибо! Скоро свяжемся 😊"
-            )
+            send_message(user_id, "Спасибо! Скоро свяжемся 😊")
 
             users_state[user_id] = "closed"
             users_closed.add(user_id)
