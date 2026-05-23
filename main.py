@@ -20,15 +20,18 @@ users_interest = {}
 # -------- GOOGLE SHEETS --------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-creds = Credentials.from_service_account_file(
-    "credentials.json",
+creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+
+creds = Credentials.from_service_account_info(
+    creds_json,
     scopes=SCOPES
 )
 
 client = gspread.authorize(creds)
 
-# ВСТАВЛЕН ID ТАБЛИЦЫ
-sheet = client.open_by_key("1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM").sheet1
+sheet = client.open_by_key(
+    "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
+).sheet1
 
 def save_lead(user_id, phone):
     try:
@@ -39,12 +42,12 @@ def save_lead(user_id, phone):
             str(user_id),
             phone,
             interest,
-            ""  # менеджер вручную
+            ""
         ])
     except Exception as e:
         print("SHEETS ERROR:", e)
 
-# -------- SEND --------
+# -------- VK SEND --------
 def send_message(user_id, text, keyboard=None):
     data = {
         "user_id": user_id,
@@ -78,7 +81,7 @@ def keyboard_main():
         ]
     }
 
-# -------- CALLBACK --------
+# -------- CALLBACK VK --------
 @app.route("/", methods=["POST"])
 def callback():
     try:
@@ -94,13 +97,12 @@ def callback():
         user_id = msg["from_id"]
         text = (msg.get("text") or "").lower().strip()
 
-        # если закрыт — молчим
         if user_id in users_closed:
             return "ok"
 
         state = users_state.get(user_id, "new")
 
-        # -------- START --------
+        # START
         if state == "new":
             users_state[user_id] = "choose"
 
@@ -111,31 +113,29 @@ def callback():
             )
             return "ok"
 
-        # -------- PRICE --------
+        # PRICE
         if "цен" in text or "стоим" in text or "сколько" in text:
             users_state[user_id] = "waiting_details"
             users_interest[user_id] = "Цена"
 
             send_message(
                 user_id,
-                "Уточните, пожалуйста, какой товар вас интересует 👀\n"
-                "Мы уточним и свяжемся с вами 📞"
+                "Уточните товар 👀\nМы свяжемся с вами 📞"
             )
             return "ok"
 
-        # -------- STOCK --------
+        # STOCK
         if "налич" in text or "есть" in text:
             users_state[user_id] = "waiting_details"
             users_interest[user_id] = "Наличие"
 
             send_message(
                 user_id,
-                "Уточните, пожалуйста, какой товар вас интересует 👀\n"
-                "Проверим наличие и свяжемся с вами 📦"
+                "Уточните товар 👀\nПроверим и ответим 📦"
             )
             return "ok"
 
-        # -------- DETAILS --------
+        # DETAILS
         if state == "waiting_details":
             users_state[user_id] = "waiting_phone"
 
@@ -143,18 +143,17 @@ def callback():
 
             send_message(
                 user_id,
-                "Понял 👍\nСпасибо за уточнение.\n\n"
-                "Оставьте, пожалуйста, номер телефона 📞"
+                "Оставьте номер телефона 📞"
             )
             return "ok"
 
-        # -------- PHONE --------
+        # PHONE
         if any(ch.isdigit() for ch in text) and len(text) >= 10:
             save_lead(user_id, text)
 
             send_message(
-                user,
-                "В ближайшее время свяжемся с вами 😊"
+                user_id,
+                "Спасибо! Скоро свяжемся 😊"
             )
 
             users_state[user_id] = "closed"
@@ -166,8 +165,3 @@ def callback():
     except Exception as e:
         print("ERROR:", e)
         return "ok"
-
-# -------- RUN --------
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
