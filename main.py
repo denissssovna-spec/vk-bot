@@ -4,9 +4,9 @@ import json
 import os
 import random
 
-import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
+
+app = Flask(__name__)
 
 print("=== STARTING APP ===")
 
@@ -19,76 +19,71 @@ print("VK_TOKEN:", bool(VK_TOKEN))
 print("CONFIRMATION_TOKEN:", bool(CONFIRMATION_TOKEN))
 print("GOOGLE_CREDENTIALS:", bool(GOOGLE_CREDENTIALS))
 
-if not GOOGLE_CREDENTIALS:
-    raise Exception("GOOGLE_CREDENTIALS EMPTY")
-
-# -------- GOOGLE SHEETS --------
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# -------- GOOGLE SAFE INIT --------
+sheet = None
 
 try:
-    print("👉 Parsing JSON...")
+    if not GOOGLE_CREDENTIALS:
+        raise Exception("GOOGLE_CREDENTIALS EMPTY")
 
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    print("👉 Parsing JSON...")
     creds_json = json.loads(GOOGLE_CREDENTIALS)
 
-    print("✅ JSON OK")
-
+    print("👉 Creating credentials...")
     creds = Credentials.from_service_account_info(
         creds_json,
         scopes=SCOPES
     )
 
-    print("✅ Credentials created")
-
+    print("👉 Authorizing gspread...")
     client = gspread.authorize(creds)
 
-    print("✅ gspread authorized")
-
+    print("👉 Opening sheet...")
     sheet = client.open_by_key(
         "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
     ).sheet1
 
-    print("✅ Google Sheets connected")
+    print("✅ GOOGLE OK")
 
 except Exception as e:
-    print("❌ GOOGLE INIT ERROR:", e)
-    raise
+    print("❌ GOOGLE ERROR:", e)
 
-# -------- APP --------
-app = Flask(__name__)
-
+# -------- STATE --------
 users_state = {}
 users_closed = set()
-users_interest = {}
 
-# -------- SAVE LEAD --------
+# -------- SAVE --------
 def save_lead(user_id, phone):
-    try:
-        interest = users_interest.get(user_id, "")
+    if sheet is None:
+        print("⚠️ Sheet not working, skip save")
+        return
 
+    try:
         sheet.append_row([
             datetime.now().strftime("%Y-%m-%d %H:%M"),
             str(user_id),
-            phone,
-            interest,
-            ""
+            phone
         ])
     except Exception as e:
         print("SHEETS ERROR:", e)
 
 # -------- SEND --------
 def send_message(user_id, text):
-    data = {
-        "user_id": user_id,
-        "message": text,
-        "random_id": random.randint(1, 10**9),
-        "access_token": VK_TOKEN,
-        "v": "5.199"
-    }
-
     try:
         requests.post(
             "https://api.vk.com/method/messages.send",
-            data=data,
+            data={
+                "user_id": user_id,
+                "message": text,
+                "random_id": random.randint(1, 10**9),
+                "access_token": VK_TOKEN,
+                "v": "5.199"
+            },
             timeout=10
         )
     except Exception as e:
@@ -108,26 +103,23 @@ def callback():
 
         msg = data["object"]["message"]
         user_id = msg["from_id"]
-        text = (msg.get("text") or "").lower().strip()
+        text = (msg.get("text") or "").lower()
 
         if user_id in users_closed:
             return "ok"
 
         state = users_state.get(user_id, "new")
 
-        # старт
         if state == "new":
-            users_state[user_id] = "waiting_phone"
-            send_message(user_id, "Оставьте номер телефона 📞")
+            users_state[user_id] = "phone"
+            send_message(user_id, "Оставьте номер 📞")
             return "ok"
 
-        # номер
-        if any(ch.isdigit() for ch in text) and len(text) >= 10:
+        if any(c.isdigit() for c in text):
             save_lead(user_id, text)
 
-            send_message(user_id, "Спасибо! Скоро свяжемся 😊")
+            send_message(user_id, "Приняли 👍")
 
-            users_state[user_id] = "closed"
             users_closed.add(user_id)
             return "ok"
 
@@ -136,8 +128,3 @@ def callback():
     except Exception as e:
         print("ERROR:", e)
         return "ok"
-
-# -------- RUN LOCAL --------
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
