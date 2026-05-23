@@ -10,7 +10,7 @@ from datetime import datetime
 
 print("=== STARTING APP ===")
 
-# -------- ENV CHECK --------
+# -------- ENV --------
 VK_TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
@@ -20,39 +20,38 @@ print("CONFIRMATION_TOKEN:", bool(CONFIRMATION_TOKEN))
 print("GOOGLE_CREDENTIALS:", bool(GOOGLE_CREDENTIALS))
 
 if not GOOGLE_CREDENTIALS:
-raise Exception("❌ GOOGLE_CREDENTIALS EMPTY")
+    raise Exception("GOOGLE_CREDENTIALS EMPTY")
 
-# -------- GOOGLE SHEETS INIT --------
+# -------- GOOGLE SHEETS --------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 try:
-print("👉 Parsing JSON...")
+    print("👉 Parsing JSON...")
 
-creds_json = json.loads(GOOGLE_CREDENTIALS)
+    creds_json = json.loads(GOOGLE_CREDENTIALS)
 
-print("✅ JSON OK")
+    print("✅ JSON OK")
 
-creds = Credentials.from_service_account_info(
-creds_json,
-scopes=SCOPES
-)
+    creds = Credentials.from_service_account_info(
+        creds_json,
+        scopes=SCOPES
+    )
 
-print("✅ Credentials created")
+    print("✅ Credentials created")
 
-client = gspread.authorize(creds)
+    client = gspread.authorize(creds)
 
-print("✅ gspread authorized")
+    print("✅ gspread authorized")
 
-sheet = client.open_by_key(
-"1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
-).sheet1
+    sheet = client.open_by_key(
+        "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
+    ).sheet1
 
-print("✅ Google Sheets connected")
+    print("✅ Google Sheets connected")
 
 except Exception as e:
-print("❌ GOOGLE INIT ERROR:", e)
-raise
-
+    print("❌ GOOGLE INIT ERROR:", e)
+    raise
 
 # -------- APP --------
 app = Flask(__name__)
@@ -61,78 +60,84 @@ users_state = {}
 users_closed = set()
 users_interest = {}
 
-
+# -------- SAVE LEAD --------
 def save_lead(user_id, phone):
-try:
-interest = users_interest.get(user_id, "")
+    try:
+        interest = users_interest.get(user_id, "")
 
-sheet.append_row([
-datetime.now().strftime("%Y-%m-%d %H:%M"),
-str(user_id),
-phone,
-interest,
-""
-])
+        sheet.append_row([
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            str(user_id),
+            phone,
+            interest,
+            ""
+        ])
+    except Exception as e:
+        print("SHEETS ERROR:", e)
 
-except Exception as e:
-print("SHEETS ERROR:", e)
-
-
+# -------- SEND --------
 def send_message(user_id, text):
-data = {
-"user_id": user_id,
-"message": text,
-"random_id": random.randint(1, 10**9),
-"access_token": VK_TOKEN,
-"v": "5.199"
-}
+    data = {
+        "user_id": user_id,
+        "message": text,
+        "random_id": random.randint(1, 10**9),
+        "access_token": VK_TOKEN,
+        "v": "5.199"
+    }
 
-try:
-requests.post(
-"https://api.vk.com/method/messages.send",
-data=data,
-timeout=10
-)
-except Exception as e:
-print("VK ERROR:", e)
+    try:
+        requests.post(
+            "https://api.vk.com/method/messages.send",
+            data=data,
+            timeout=10
+        )
+    except Exception as e:
+        print("VK ERROR:", e)
 
-
+# -------- WEBHOOK --------
 @app.route("/", methods=["POST"])
 def callback():
-try:
-data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
 
-if data.get("type") == "confirmation":
-return CONFIRMATION_TOKEN or "ok"
+        if data.get("type") == "confirmation":
+            return CONFIRMATION_TOKEN or "ok"
 
-if data.get("type") != "message_new":
-return "ok"
+        if data.get("type") != "message_new":
+            return "ok"
 
-msg = data["object"]["message"]
-user_id = msg["from_id"]
-text = (msg.get("text") or "").lower().strip()
+        msg = data["object"]["message"]
+        user_id = msg["from_id"]
+        text = (msg.get("text") or "").lower().strip()
 
-if user_id in users_closed:
-return "ok"
+        if user_id in users_closed:
+            return "ok"
 
-state = users_state.get(user_id, "new")
+        state = users_state.get(user_id, "new")
 
-if state == "new":
-users_state[user_id] = "waiting_phone"
-send_message(user_id, "Оставьте номер телефона 📞")
-return "ok"
+        # старт
+        if state == "new":
+            users_state[user_id] = "waiting_phone"
+            send_message(user_id, "Оставьте номер телефона 📞")
+            return "ok"
 
-if any(ch.isdigit() for ch in text) and len(text) >= 10:
-save_lead(user_id, text)
+        # номер
+        if any(ch.isdigit() for ch in text) and len(text) >= 10:
+            save_lead(user_id, text)
 
-send_message(user_id, "Спасибо! Скоро свяжемся 😊")
+            send_message(user_id, "Спасибо! Скоро свяжемся 😊")
 
-users_state[user_id] = "closed"
-users_closed.add(user_id)
-return "ok"
+            users_state[user_id] = "closed"
+            users_closed.add(user_id)
+            return "ok"
 
-return "ok"
+        return "ok"
 
-except Exception as e:
-print("ERROR:", e)
-return "ok"
+    except Exception as e:
+        print("ERROR:", e)
+        return "ok"
+
+# -------- RUN LOCAL --------
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
