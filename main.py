@@ -10,30 +10,36 @@ app = Flask(__name__)
 VK_TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-# -------- GOOGLE SAFE INIT --------
+# -------- GOOGLE (через ENV) --------
 sheet = None
 
 try:
     import gspread
     from google.oauth2.service_account import Credentials
 
-    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-    creds = Credentials.from_service_account_file(
-        "credentials.json",
-        scopes=SCOPES
-    )
+    if creds_json:
+        creds_dict = json.loads(creds_json)
 
-    client = gspread.authorize(creds)
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
 
-    sheet = client.open_by_key(
-        "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
-    ).sheet1
+        client = gspread.authorize(creds)
 
-    print("✅ GOOGLE OK")
+        sheet = client.open_by_key(
+            "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
+        ).sheet1
+
+        print("✅ GOOGLE OK")
+    else:
+        print("⚠️ GOOGLE_CREDENTIALS NOT FOUND")
 
 except Exception as e:
     print("❌ GOOGLE ERROR:", e)
+    sheet = None
 
 # -------- STATE --------
 users_state = {}
@@ -115,7 +121,7 @@ def keyboard_main():
         ]
     }
 
-# -------- WEBHOOK --------
+# -------- CALLBACK --------
 @app.route("/", methods=["POST"])
 def callback():
     try:
@@ -131,13 +137,13 @@ def callback():
         user_id = msg["from_id"]
         text = (msg.get("text") or "").lower().strip()
 
-        # -------- ИГНОР 14 ДНЕЙ --------
+        # ---- игнор 14 дней ----
         if is_user_recent(user_id):
             return "ok"
 
         state = users_state.get(user_id, "new")
 
-        # -------- СТАРТ --------
+        # ---- старт ----
         if state == "new":
             users_state[user_id] = "choose"
 
@@ -148,7 +154,7 @@ def callback():
             )
             return "ok"
 
-        # -------- ВЫБОР --------
+        # ---- выбор ----
         if state == "choose":
             if "цен" in text:
                 users_state[user_id] = "waiting_details"
@@ -167,19 +173,19 @@ def callback():
             send_message(user_id, "Выберите вариант ниже 👇", keyboard_main())
             return "ok"
 
-        # -------- УТОЧНЕНИЕ --------
+        # ---- уточнение ----
         if state == "waiting_details":
             users_state[user_id] = "waiting_phone"
             users_interest[user_id] += f": {text}"
 
             send_message(
                 user_id,
-                "Мы уточним информацию и свяжемся с вами 👍\n\n"
+                "Уточним информацию и свяжемся с вами 👍\n\n"
                 "Оставьте номер телефона 📞"
             )
             return "ok"
 
-        # -------- НОМЕР --------
+        # ---- номер ----
         if state == "waiting_phone":
             save_lead(user_id, text)
 
@@ -200,4 +206,4 @@ def callback():
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)_
+    app.run(host="0.0.0.0", port=port)
