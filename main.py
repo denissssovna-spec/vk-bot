@@ -5,22 +5,15 @@ import os
 import random
 from datetime import datetime, timedelta
 
-print("🚀 APP FILE LOADED")
-
 app = Flask(__name__)
 
 VK_TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-print("VK_TOKEN:", bool(VK_TOKEN))
-print("CONFIRMATION_TOKEN:", bool(CONFIRMATION_TOKEN))
-
 # -------- GOOGLE SAFE INIT --------
 sheet = None
 
 try:
-    print("👉 START GOOGLE INIT")
-
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -73,7 +66,7 @@ def is_user_recent(user_id):
 # -------- SAVE --------
 def save_lead(user_id, phone):
     if sheet is None:
-        print("⚠️ sheet not ready, skip save")
+        print("⚠️ sheet not ready")
         return
 
     interest = users_interest.get(user_id, "")
@@ -86,7 +79,6 @@ def save_lead(user_id, phone):
             phone,
             "new"
         ])
-        print("✅ LEAD SAVED")
     except Exception as e:
         print("SHEETS ERROR:", e)
 
@@ -139,11 +131,8 @@ def callback():
         user_id = msg["from_id"]
         text = (msg.get("text") or "").lower().strip()
 
-        print(f"📩 MESSAGE: {user_id} -> {text}")
-
         # -------- ИГНОР 14 ДНЕЙ --------
         if is_user_recent(user_id):
-            print("⏳ USER IGNORED (14 DAYS)")
             return "ok"
 
         state = users_state.get(user_id, "new")
@@ -166,9 +155,7 @@ def callback():
                 users_interest[user_id] = "Цена"
 
                 send_message(user_id, "Какой товар вас интересует? 👀")
-
-
-return "ok"
+                return "ok"
 
             if "налич" in text or "есть" in text:
                 users_state[user_id] = "waiting_details"
@@ -213,5 +200,4 @@ return "ok"
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    print("🚀 START SERVER ON PORT:", port)
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)_
