@@ -5,111 +5,57 @@ import os
 import random
 from datetime import datetime, timedelta
 
+import gspread
+from google.oauth2.service_account import Credentials
+
 app = Flask(__name__)
 
-VK_TOKEN = os.getenv("VK_TOKEN")
+TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-# -------- GOOGLE (через ENV) --------
-sheet = None
-
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    creds_json = os.getenv("GOOGLE_CREDENTIALS")
-
-    if creds_json:
-        creds_dict = json.loads(creds_json)
-
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-
-        client = gspread.authorize(creds)
-
-        sheet = client.open_by_key(
-            "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
-        ).sheet1
-
-        print("✅ GOOGLE OK")
-    else:
-        print("⚠️ GOOGLE_CREDENTIALS NOT FOUND")
-
-except Exception as e:
-    print("❌ GOOGLE ERROR:", e)
-    sheet = None
-
-# -------- STATE --------
+# --- СОСТОЯНИЯ ---
 users_state = {}
+users_last_time = {}
 users_interest = {}
 
-# -------- ПРОВЕРКА 14 ДНЕЙ --------
-def is_user_recent(user_id):
-    if sheet is None:
-        return False
+# --- GOOGLE SHEETS ---
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
-    try:
-        records = sheet.get_all_values()
+creds_json = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
+creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
+client = gspread.authorize(creds)
+sheet = client.open("Leads Bot").sheet1
 
-        for row in reversed(records[1:]):
-            if len(row) < 2:
-                continue
-
-            if row[1] == str(user_id):
-                last_time = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
-
-                if datetime.now() - last_time < timedelta(days=14):
-                    return True
-                return False
-
-    except Exception as e:
-        print("CHECK ERROR:", e)
-
-    return False
-
-# -------- SAVE --------
 def save_lead(user_id, phone):
-    if sheet is None:
-        print("⚠️ sheet not ready")
-        return
-
-    interest = users_interest.get(user_id, "")
-
     try:
+        interest = users_interest.get(user_id, "")
+
         sheet.append_row([
             datetime.now().strftime("%Y-%m-%d %H:%M"),
             str(user_id),
-            interest,
             phone,
-            "new"
+            interest,
+            ""
         ])
     except Exception as e:
         print("SHEETS ERROR:", e)
 
-# -------- SEND --------
+# --- ОТПРАВКА ---
 def send_message(user_id, text, keyboard=None):
     data = {
         "user_id": user_id,
         "message": text,
         "random_id": random.randint(1, 10**9),
-        "access_token": VK_TOKEN,
+        "access_token": TOKEN,
         "v": "5.199"
     }
 
     if keyboard:
         data["keyboard"] = json.dumps(keyboard)
 
-    try:
-        requests.post(
-            "https://api.vk.com/method/messages.send",
-            data=data
-        )
-    except Exception as e:
-        print("VK ERROR:", e)
+    requests.post("https://api.vk.com/method/messages.send", data=data)
 
-# -------- KEYBOARD --------
+# --- КНОПКИ ---
 def keyboard_main():
     return {
         "one_time": False,
@@ -121,14 +67,14 @@ def keyboard_main():
         ]
     }
 
-# -------- CALLBACK --------
+# --- CALLBACK ---
 @app.route("/", methods=["POST"])
 def callback():
     try:
         data = request.get_json(force=True)
 
         if data.get("type") == "confirmation":
-            return CONFIRMATION_TOKEN or "ok"
+            return CONFIRMATION_TOKEN
 
         if data.get("type") != "message_new":
             return "ok"
@@ -137,13 +83,16 @@ def callback():
         user_id = msg["from_id"]
         text = (msg.get("text") or "").lower().strip()
 
-        # ---- игнор 14 дней ----
-        if is_user_recent(user_id):
-            return "ok"
+        now = datetime.now()
+
+        # --- игнор 2 недели ---
+        if user_id in users_last_time:
+            if now - users_last_time[user_id] < timedelta(days=14):
+                return "ok"
 
         state = users_state.get(user_id, "new")
 
-        # ---- старт ----
+        # --- СТАРТ ---
         if state == "new":
             users_state[user_id] = "choose"
 
@@ -154,56 +103,58 @@ def callback():
             )
             return "ok"
 
-        # ---- выбор ----
-        if state == "choose":
-            if "цен" in text:
-                users_state[user_id] = "waiting_details"
-                users_interest[user_id] = "Цена"
+        # --- ВЫБОР ---
+        if "цен" in text:
+            users_state[user_id] = "waiting_product"
+            users_interest[user_id] = "Цена"
 
-                send_message(user_id, "Какой товар вас интересует? 👀")
-                return "ok"
-
-            if "налич" in text or "есть" in text:
-                users_state[user_id] = "waiting_details"
-                users_interest[user_id] = "Наличие"
-
-                send_message(user_id, "Какой товар вас интересует? 👀")
-                return "ok"
-
-            send_message(user_id, "Выберите вариант ниже 👇", keyboard_main())
+            send_message(
+                user_id,
+                "Отлично! Подскажите, какой конкретно товар рассматриваете 👀"
+            )
             return "ok"
 
-        # ---- уточнение ----
-        if state == "waiting_details":
+        if "налич" in text or "есть" in text:
+            users_state[user_id] = "waiting_product"
+            users_interest[user_id] = "Наличие"
+
+            send_message(
+                user_id,
+                "Отлично! Подскажите, какой конкретно товар рассматриваете 👀"
+            )
+            return "ok"
+
+        # --- ТОВАР ---
+        if state == "waiting_product":
             users_state[user_id] = "waiting_phone"
             users_interest[user_id] += f": {text}"
 
             send_message(
                 user_id,
-                "Уточним информацию и свяжемся с вами 👍\n\n"
-                "Оставьте номер телефона 📞"
+                "Замечательно! Уже вовсю работаем над вашим запросом 👀\n\n"
+                "Чтобы мы смогли с вами оперативно связаться — оставьте ваш номер телефона 📞"
             )
             return "ok"
 
-        # ---- номер ----
+        # --- ТЕЛЕФОН ---
         if state == "waiting_phone":
             save_lead(user_id, text)
 
             send_message(
                 user_id,
-                "Спасибо! В ближайшее время с вами свяжемся 😊"
+                "Спасибо! В ближайшее время менеджер свяжется с вами 😊"
             )
 
             users_state[user_id] = "done"
+            users_last_time[user_id] = now
             return "ok"
 
         return "ok"
 
-    except Exception as e:
-        print("❌ CALLBACK ERROR:", e)
+    except Exception as e:print("ERROR:", e)
         return "ok"
 
-# -------- RUN --------
+# --- RUN ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
