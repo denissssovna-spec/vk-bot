@@ -158,10 +158,9 @@ def callback():
 
     # -------- НОМЕР --------
     if state == "waiting_phone":
-        save_lead(user_id, text
+        save_lead(user_id, text)
 
-
-send_message(
+        send_message(
             user_id,
             "Спасибо! В ближайшее время с вами свяжемся 😊"
         )
@@ -174,4 +173,4 @@ send_message(
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port))
+    app.run(host="0.0.0.0", port=port)
