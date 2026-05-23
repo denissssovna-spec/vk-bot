@@ -31,17 +31,20 @@ sheet = client.open_by_key(
 users_state = {}
 users_interest = {}
 
-# -------- ПРОВЕРКА 14 ДНЕЙ ИЗ ТАБЛИЦЫ --------
+# -------- ПРОВЕРКА 14 ДНЕЙ --------
 def is_user_recent(user_id):
-    records = sheet.get_all_values()
+    try:
+        records = sheet.get_all_values()
 
-    for row in reversed(records[1:]):  # пропускаем заголовок
-        if row[1] == str(user_id):
-            last_time = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
+        for row in reversed(records[1:]):
+            if row[1] == str(user_id):
+                last_time = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
 
-            if datetime.now() - last_time < timedelta(days=14):
-                return True
-            return False
+                if datetime.now() - last_time < timedelta(days=14):
+                    return True
+                return False
+    except Exception as e:
+        print("CHECK ERROR:", e)
 
     return False
 
@@ -105,7 +108,7 @@ def callback():
     user_id = msg["from_id"]
     text = (msg.get("text") or "").lower().strip()
 
-    # -------- ИГНОР 14 ДНЕЙ (через таблицу) --------
+    # -------- ИГНОР 14 ДНЕЙ --------
     if is_user_recent(user_id):
         return "ok"
 
@@ -138,7 +141,6 @@ def callback():
             send_message(user_id, "Какой товар вас интересует? 👀")
             return "ok"
 
-        # если написал не по кнопкам
         send_message(user_id, "Выберите вариант ниже 👇", keyboard_main())
         return "ok"
 
@@ -156,19 +158,20 @@ def callback():
 
     # -------- НОМЕР --------
     if state == "waiting_phone":
-    save_lead(user_id, text)
+        save_lead(user_id, text
 
-    send_message(
-        user_id,
-        "Спасибо! В ближайшее время с вами свяжемся 😊"
-    )
 
-    users_state[user_id] = "done"
-    return "ok"
-    
+send_message(
+            user_id,
+            "Спасибо! В ближайшее время с вами свяжемся 😊"
+        )
+
+        users_state[user_id] = "done"
+        return "ok"
+
     return "ok"
 
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port))
