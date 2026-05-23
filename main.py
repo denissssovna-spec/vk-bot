@@ -8,36 +8,40 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-app = Flask(__name__)
+print("=== STARTING APP ===")
 
-# ---------------- ENV ----------------
+# -------- ENV CHECK --------
 VK_TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-# ---------------- SAFETY CHECK ----------------
-if not VK_TOKEN:
-print("❌ VK_TOKEN is missing")
-
-if not CONFIRMATION_TOKEN:
-print("❌ VK_CONFIRMATION_TOKEN is missing")
+print("VK_TOKEN:", bool(VK_TOKEN))
+print("CONFIRMATION_TOKEN:", bool(CONFIRMATION_TOKEN))
+print("GOOGLE_CREDENTIALS:", bool(GOOGLE_CREDENTIALS))
 
 if not GOOGLE_CREDENTIALS:
-print("❌ GOOGLE_CREDENTIALS is missing")
-raise Exception("No GOOGLE_CREDENTIALS in environment")
+raise Exception("❌ GOOGLE_CREDENTIALS EMPTY")
 
-# ---------------- GOOGLE SHEETS ----------------
+# -------- GOOGLE SHEETS INIT --------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 try:
+print("👉 Parsing JSON...")
+
 creds_json = json.loads(GOOGLE_CREDENTIALS)
+
+print("✅ JSON OK")
 
 creds = Credentials.from_service_account_info(
 creds_json,
 scopes=SCOPES
 )
 
+print("✅ Credentials created")
+
 client = gspread.authorize(creds)
+
+print("✅ gspread authorized")
 
 sheet = client.open_by_key(
 "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
@@ -46,22 +50,19 @@ sheet = client.open_by_key(
 print("✅ Google Sheets connected")
 
 except Exception as e:
-print("❌ Google Sheets error:", e)
-sheet = None
+print("❌ GOOGLE INIT ERROR:", e)
+raise
 
 
-# ---------------- STATE ----------------
+# -------- APP --------
+app = Flask(__name__)
+
 users_state = {}
 users_closed = set()
 users_interest = {}
 
 
-# ---------------- SAVE LEAD ----------------
 def save_lead(user_id, phone):
-if sheet is None:
-print("❌ Sheet not available")
-return
-
 try:
 interest = users_interest.get(user_id, "")
 
@@ -77,8 +78,7 @@ except Exception as e:
 print("SHEETS ERROR:", e)
 
 
-# ---------------- VK SEND ----------------
-def send_message(user_id, text, keyboard=None):
+def send_message(user_id, text):
 data = {
 "user_id": user_id,
 "message": text,
@@ -86,9 +86,6 @@ data = {
 "access_token": VK_TOKEN,
 "v": "5.199"
 }
-
-if keyboard:
-data["keyboard"] = json.dumps(keyboard)
 
 try:
 requests.post(
@@ -100,26 +97,6 @@ except Exception as e:
 print("VK ERROR:", e)
 
 
-# ---------------- KEYBOARD ----------------
-def keyboard_main():
-return {
-"one_time": False,
-"buttons": [
-[
-{
-"action": {"type": "text", "label": "💰 Цена"},
-"color": "primary"
-},
-{
-"action": {"type": "text", "label": "📦 Наличие"},
-"color": "secondary"
-}
-]
-]
-}
-
-
-# ---------------- WEBHOOK ----------------
 @app.route("/", methods=["POST"])
 def callback():
 try:
@@ -140,42 +117,11 @@ return "ok"
 
 state = users_state.get(user_id, "new")
 
-# START
 if state == "new":
-users_state[user_id] = "choose"
-
-send_message(
-user_id,
-"Здравствуйте 👋\nВыберите, что вас интересует:",
-keyboard_main()
-)
-return "ok"
-
-# PRICE
-if "цен" in text or "сколько" in text or "стоим" in text:
-users_state[user_id] = "waiting_details"
-users_interest[user_id] = "Цена"
-
-send_message(user_id, "Уточните товар 👀")
-return "ok"
-
-# STOCK
-if "налич" in text or "есть" in text:
-users_state[user_id] = "waiting_details"
-users_interest[user_id] = "Наличие"
-
-send_message(user_id, "Уточните товар 👀")
-return "ok"
-
-# DETAILS
-if state == "waiting_details":
 users_state[user_id] = "waiting_phone"
-users_interest[user_id] += f": {text}"
-
 send_message(user_id, "Оставьте номер телефона 📞")
 return "ok"
 
-# PHONE
 if any(ch.isdigit() for ch in text) and len(text) >= 10:
 save_lead(user_id, text)
 
@@ -190,9 +136,3 @@ return "ok"
 except Exception as e:
 print("ERROR:", e)
 return "ok"
-
-
-# ---------------- RUN (LOCAL ONLY) ----------------
-if __name__ == "__main__":
-port = int(os.getenv("PORT", 10000))
-app.run(host="0.0.0.0", port=port)
