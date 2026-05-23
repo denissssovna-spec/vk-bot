@@ -95,7 +95,6 @@ def callback():
         # --- СТАРТ ---
         if state == "new":
             users_state[user_id] = "choose"
-
             send_message(
                 user_id,
                 "Здравствуйте 👋\nЧто вас интересует?",
@@ -151,7 +150,8 @@ def callback():
 
         return "ok"
 
-    except Exception as e:print("ERROR:", e)
+    except Exception as e:
+        print("ERROR:", e)
         return "ok"
 
 # --- RUN ---
