@@ -3,29 +3,44 @@ import requests
 import json
 import os
 import random
-
-import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
+
+print("🚀 APP FILE LOADED")
 
 app = Flask(__name__)
 
 VK_TOKEN = os.getenv("VK_TOKEN")
 CONFIRMATION_TOKEN = os.getenv("VK_CONFIRMATION_TOKEN")
 
-# -------- GOOGLE --------
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+print("VK_TOKEN:", bool(VK_TOKEN))
+print("CONFIRMATION_TOKEN:", bool(CONFIRMATION_TOKEN))
 
-creds = Credentials.from_service_account_file(
-    "credentials.json",
-    scopes=SCOPES
-)
+# -------- GOOGLE SAFE INIT --------
+sheet = None
 
-client = gspread.authorize(creds)
+try:
+    print("👉 START GOOGLE INIT")
 
-sheet = client.open_by_key(
-    "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
-).sheet1
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    creds = Credentials.from_service_account_file(
+        "credentials.json",
+        scopes=SCOPES
+    )
+
+    client = gspread.authorize(creds)
+
+    sheet = client.open_by_key(
+        "1WhnWRzrgQ1XuXHaoOyrXmIzjAAqoyxgwDjydvr5wsWM"
+    ).sheet1
+
+    print("✅ GOOGLE OK")
+
+except Exception as e:
+    print("❌ GOOGLE ERROR:", e)
 
 # -------- STATE --------
 users_state = {}
@@ -33,16 +48,23 @@ users_interest = {}
 
 # -------- ПРОВЕРКА 14 ДНЕЙ --------
 def is_user_recent(user_id):
+    if sheet is None:
+        return False
+
     try:
         records = sheet.get_all_values()
 
         for row in reversed(records[1:]):
+            if len(row) < 2:
+                continue
+
             if row[1] == str(user_id):
                 last_time = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
 
                 if datetime.now() - last_time < timedelta(days=14):
                     return True
                 return False
+
     except Exception as e:
         print("CHECK ERROR:", e)
 
@@ -50,6 +72,10 @@ def is_user_recent(user_id):
 
 # -------- SAVE --------
 def save_lead(user_id, phone):
+    if sheet is None:
+        print("⚠️ sheet not ready, skip save")
+        return
+
     interest = users_interest.get(user_id, "")
 
     try:
@@ -60,6 +86,7 @@ def save_lead(user_id, phone):
             phone,
             "new"
         ])
+        print("✅ LEAD SAVED")
     except Exception as e:
         print("SHEETS ERROR:", e)
 
@@ -77,7 +104,10 @@ def send_message(user_id, text, keyboard=None):
         data["keyboard"] = json.dumps(keyboard)
 
     try:
-        requests.post("https://api.vk.com/method/messages.send", data=data)
+        requests.post(
+            "https://api.vk.com/method/messages.send",
+            data=data
+        )
     except Exception as e:
         print("VK ERROR:", e)
 
@@ -96,81 +126,92 @@ def keyboard_main():
 # -------- WEBHOOK --------
 @app.route("/", methods=["POST"])
 def callback():
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
 
-    if data.get("type") == "confirmation":
-        return CONFIRMATION_TOKEN
+        if data.get("type") == "confirmation":
+            return CONFIRMATION_TOKEN or "ok"
 
-    if data.get("type") != "message_new":
-        return "ok"
-
-    msg = data["object"]["message"]
-    user_id = msg["from_id"]
-    text = (msg.get("text") or "").lower().strip()
-
-    # -------- ИГНОР 14 ДНЕЙ --------
-    if is_user_recent(user_id):
-        return "ok"
-
-    state = users_state.get(user_id, "new")
-
-    # -------- СТАРТ --------
-    if state == "new":
-        users_state[user_id] = "choose"
-
-        send_message(
-            user_id,
-            "Здравствуйте 👋\nЧто вас интересует?",
-            keyboard_main()
-        )
-        return "ok"
-
-    # -------- ВЫБОР --------
-    if state == "choose":
-        if "цен" in text:
-            users_state[user_id] = "waiting_details"
-            users_interest[user_id] = "Цена"
-
-            send_message(user_id, "Какой товар вас интересует? 👀")
+        if data.get("type") != "message_new":
             return "ok"
 
-        if "налич" in text or "есть" in text:
-            users_state[user_id] = "waiting_details"
-            users_interest[user_id] = "Наличие"
+        msg = data["object"]["message"]
+        user_id = msg["from_id"]
+        text = (msg.get("text") or "").lower().strip()
 
-            send_message(user_id, "Какой товар вас интересует? 👀")
+        print(f"📩 MESSAGE: {user_id} -> {text}")
+
+        # -------- ИГНОР 14 ДНЕЙ --------
+        if is_user_recent(user_id):
+            print("⏳ USER IGNORED (14 DAYS)")
             return "ok"
 
-        send_message(user_id, "Выберите вариант ниже 👇", keyboard_main())
+        state = users_state.get(user_id, "new")
+
+        # -------- СТАРТ --------
+        if state == "new":
+            users_state[user_id] = "choose"
+
+            send_message(
+                user_id,
+                "Здравствуйте 👋\nЧто вас интересует?",
+                keyboard_main()
+            )
+            return "ok"
+
+        # -------- ВЫБОР --------
+        if state == "choose":
+            if "цен" in text:
+                users_state[user_id] = "waiting_details"
+                users_interest[user_id] = "Цена"
+
+                send_message(user_id, "Какой товар вас интересует? 👀")
+
+
+return "ok"
+
+            if "налич" in text or "есть" in text:
+                users_state[user_id] = "waiting_details"
+                users_interest[user_id] = "Наличие"
+
+                send_message(user_id, "Какой товар вас интересует? 👀")
+                return "ok"
+
+            send_message(user_id, "Выберите вариант ниже 👇", keyboard_main())
+            return "ok"
+
+        # -------- УТОЧНЕНИЕ --------
+        if state == "waiting_details":
+            users_state[user_id] = "waiting_phone"
+            users_interest[user_id] += f": {text}"
+
+            send_message(
+                user_id,
+                "Мы уточним информацию и свяжемся с вами 👍\n\n"
+                "Оставьте номер телефона 📞"
+            )
+            return "ok"
+
+        # -------- НОМЕР --------
+        if state == "waiting_phone":
+            save_lead(user_id, text)
+
+            send_message(
+                user_id,
+                "Спасибо! В ближайшее время с вами свяжемся 😊"
+            )
+
+            users_state[user_id] = "done"
+            return "ok"
+
         return "ok"
 
-    # -------- УТОЧНЕНИЕ --------
-    if state == "waiting_details":
-        users_state[user_id] = "waiting_phone"
-        users_interest[user_id] += f": {text}"
-
-        send_message(
-            user_id,
-            "Мы уточним информацию и свяжемся с вами 👍\n\n"
-            "Оставьте номер телефона 📞"
-        )
+    except Exception as e:
+        print("❌ CALLBACK ERROR:", e)
         return "ok"
-
-    # -------- НОМЕР --------
-    if state == "waiting_phone":
-        save_lead(user_id, text)
-
-        send_message(
-            user_id,
-            "Спасибо! В ближайшее время с вами свяжемся 😊"
-        )
-
-        users_state[user_id] = "done"
-        return "ok"
-
-    return "ok"
 
 # -------- RUN --------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
+    print("🚀 START SERVER ON PORT:", port)
     app.run(host="0.0.0.0", port=port)
